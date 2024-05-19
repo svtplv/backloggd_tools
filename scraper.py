@@ -1,9 +1,15 @@
 import asyncio
+import logging
+from time import perf_counter
 
 import aiohttp
 from bs4 import BeautifulSoup
 
+from exceptions import EmptyProfileException, UserDoesNotExistException
 from utils import BoundedTaskGroup
+
+
+logger = logging.getLogger(__name__)
 
 
 class LogCollector:
@@ -18,17 +24,25 @@ class LogCollector:
 
     async def collect(self) -> None:
         """Get and store all user logs."""
+        start = perf_counter()
         last_page_num = await self._get_last_page()
+        logger.info('Starting paginated parsing')
         async with BoundedTaskGroup(max_concurrency=2) as page_tg:
             for page_num in range(1, last_page_num + 1):
                 page_tg.create_task(self._fetch_info_per_page(page_num))
+        logger.info('Paginated parsing: Done')
+        logger.info(f'Total games: {len(self.logs)}. Fetching logs...')
         async with BoundedTaskGroup(max_concurrency=4) as log_tg:
             for partial_log in self.logs:
                 log_tg.create_task(self._fetch_log(partial_log))
+        logger.info(f'Log collecting done in {perf_counter() - start} seconds')
 
     async def _get_last_page(self) -> int:
         """Get last page from paginated profile."""
         async with self.SESSION.get(self.GAMES_URL) as response:
+            if response.status == 404:
+                logger.critical(f'User {self.USERNAME} does not exist')
+                raise UserDoesNotExistException
             page = await response.text()
             soup = BeautifulSoup(page, 'lxml')
             last_page_num = int(soup.find_all('span', class_='page')[-2].text)
@@ -45,6 +59,9 @@ class LogCollector:
     def _parse_games_info(self, soup: BeautifulSoup) -> None:
         """Parse page to get relevant info for each game on page."""
         games = soup.find_all('div', class_='rating-hover')
+        if not games:
+            logger.critical(f'User {self.USERNAME} did nog log any games.')
+            raise EmptyProfileException
         for game in games:
             partial_log = {'username': self.USERNAME}
             game_id = int(game.find('div', class_='game-cover')['game_id'])
@@ -61,14 +78,16 @@ class LogCollector:
         async with self.SESSION.get(url) as response:
             status = response.status
             if status == 429:
-                print(f'Превышен лимит, повторяем slug: {partial_log['slug']}')
+                logger.error(f'{partial_log['slug']}: Too many requests.')
                 await asyncio.sleep(60)
+                logger.warning(f'Repeating slug: {partial_log['slug']}')
                 await self._fetch_log(partial_log)
             if status == 200:
+                logger.debug(f'{partial_log['slug']}: Success.')
                 page = await response.text()
                 soup = BeautifulSoup(page, 'lxml')
                 self._parse_log(soup, partial_log)
-                print(f'{partial_log['slug']}: success')
+                logger.debug(f'{partial_log['slug']}: Parcing done.')
             await asyncio.sleep(1)
 
     @staticmethod

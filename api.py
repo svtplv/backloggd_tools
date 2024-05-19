@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from datetime import datetime as dt
 
@@ -9,6 +10,7 @@ from utils import BoundedTaskGroup
 
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 class IgdbInfoCollector:
@@ -93,14 +95,19 @@ class IgdbInfoCollector:
 
             status = responce.status
             if status not in (200, 429):
+                if status in (400, 401):
+                    logger.critical(f'{await responce.json()}')
+                else:
+                    logger.critical(f'Something went wrong. Status: {status}')
                 responce.raise_for_status()
             if status == 429:
-                print('Превышен лимит, повторяем запрос')
+                logger.error('Too many requests. Pause and repeat.')
                 await asyncio.sleep(1)
                 await self._fetch_info(self.SESSION, game_ids)
             else:
                 data = await responce.json()
                 if data:
+                    logger.info(f'Success: {len(data)} results found.')
                     self._parse_game_data(data)
                 else:
-                    print('По переданным id ничего не нашлось')
+                    logger.warning('Nothing found. API returned empty list.')

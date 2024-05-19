@@ -1,11 +1,16 @@
 import asyncio
-from time import perf_counter
+import logging.config
 
 from aiohttp import ClientSession
 
 from api import IgdbInfoCollector
 from scraper import LogCollector
 from savers import JsonSaver
+
+from logging_settings import logging_config
+
+
+logging.config.dictConfig(logging_config)
 
 
 async def main():
@@ -21,6 +26,4 @@ async def main():
         )
 
 if __name__ == '__main__':
-    start = perf_counter()
     asyncio.run(main())
-    print(perf_counter() - start)
